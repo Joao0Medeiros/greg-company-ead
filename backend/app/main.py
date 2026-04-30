@@ -9,7 +9,7 @@ from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os, shutil, csv, io, zipfile, json, re
 from sqlalchemy import text
-from database import engine
+from app.database import engine
 
 SECRET_KEY = "greg-company-dev-secret-change-in-production"
 ALGORITHM = "HS256"
