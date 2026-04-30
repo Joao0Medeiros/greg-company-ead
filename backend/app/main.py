@@ -1,4 +1,3 @@
-
 from datetime import datetime, timedelta
 from fastapi import FastAPI, HTTPException, Depends, UploadFile, File
 from fastapi.middleware.cors import CORSMiddleware
@@ -9,6 +8,8 @@ from jose import jwt, JWTError
 from pydantic import BaseModel
 from typing import Optional, List, Dict, Any
 import os, shutil, csv, io, zipfile, json, re
+from sqlalchemy import text
+from database import engine
 
 SECRET_KEY = "greg-company-dev-secret-change-in-production"
 ALGORITHM = "HS256"
@@ -92,7 +93,96 @@ def seed_modules():
                 questions.append({"id":qid,"module_id":mid,"question":f"Atendimento pergunta {n}: escolha a melhor conduta.","option_a":"Ignorar","option_b":"Responder sem ouvir","option_c":"Escutar e orientar corretamente","option_d":"Encerrar conversa","correct_option":"C"})
                 qid+=1
         mid+=1
-seed_modules()
+
+def init_state_table():
+    with engine.begin() as conn:
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS app_state (
+                id INTEGER PRIMARY KEY,
+                data JSONB NOT NULL
+            )
+        """))
+
+
+def export_state():
+    return {
+        "users": users,
+        "courses": courses,
+        "modules": modules,
+        "questions": questions,
+        "classes": classes,
+        "class_students": class_students,
+        "enrollments": enrollments,
+        "grades": grades,
+        "responses": responses,
+        "reviews": reviews,
+        "video_progress": {f"{k[0]}:{k[1]}": v for k, v in video_progress.items()},
+    }
+
+
+def import_state(data):
+    global users, courses, modules, questions, classes
+    global class_students, enrollments, grades, responses, reviews, video_progress
+
+    if isinstance(data, str):
+        data = json.loads(data)
+
+    users = data.get("users", users)
+    courses = data.get("courses", courses)
+    modules = data.get("modules", modules)
+    questions = data.get("questions", questions)
+    classes = data.get("classes", classes)
+    class_students = {int(k): v for k, v in data.get("class_students", class_students).items()}
+    enrollments = {int(k): v for k, v in data.get("enrollments", enrollments).items()}
+    grades = data.get("grades", grades)
+    responses = data.get("responses", responses)
+    reviews = data.get("reviews", reviews)
+
+    raw_progress = data.get("video_progress", {})
+    video_progress = {}
+    for key, value in raw_progress.items():
+        user_id, module_id = key.split(":")
+        video_progress[(int(user_id), int(module_id))] = value
+
+
+def save_state():
+    with engine.begin() as conn:
+        conn.execute(
+            text("""
+                INSERT INTO app_state (id, data)
+                VALUES (1, CAST(:data AS JSONB))
+                ON CONFLICT (id)
+                DO UPDATE SET data = CAST(:data AS JSONB)
+            """),
+            {"data": json.dumps(export_state(), ensure_ascii=False)}
+        )
+
+
+def load_state():
+    init_state_table()
+    with engine.begin() as conn:
+        row = conn.execute(text("SELECT data FROM app_state WHERE id = 1")).fetchone()
+
+    if row:
+        import_state(row[0])
+    else:
+        seed_modules()
+        save_state()
+
+
+load_state()
+
+@app.middleware("http")
+async def auto_save_state(request, call_next):
+    response = await call_next(request)
+
+    if request.url.path.startswith("/api") and request.method in ["POST", "PUT", "PATCH", "DELETE"]:
+        try:
+            save_state()
+        except Exception as e:
+            print("Erro ao salvar estado no banco:", e)
+
+    return response
 
 def ensure_demo_files():
     for fname, content in [
