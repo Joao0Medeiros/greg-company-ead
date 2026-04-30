@@ -1,7 +1,7 @@
 fastapi
-uvicorn
+uvicorn[standard]
 python-multipart
-python-jose
+python-jose[cryptography]
 pydantic
 sqlalchemy
 psycopg2-binary
